@@ -74,11 +74,19 @@ impl Downloader {
 
     self.offset += search.len() as u32;
 
+    let mut skipped = 0;
+
     for result in search {
       if self.cache.contains(&result.id.to_string()) {
-        Log::info(format!("Skipping {} - cached", result.id).as_str());
+        skipped += 1;
         continue
       }
+      
+      if skipped > 0 {
+        Log::info(format!("Skipped {} maps - cached", skipped).as_str());
+        skipped = 0;
+      }
+
       Log::info(format!("Downloading {} | {} - {} by {}", result.id, result.artist, result.title, result.creator).as_str());
       match self.download(config, &result).await {
         Ok(size) => {
