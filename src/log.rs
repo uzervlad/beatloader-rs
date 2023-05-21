@@ -3,6 +3,7 @@ use colored::Colorize;
 pub struct Log;
 
 impl Log {
+  #[allow(dead_code)]
   pub fn print(s: &str) {
     println!("{}", s)
   }
