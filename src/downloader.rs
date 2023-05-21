@@ -95,7 +95,7 @@ impl Downloader {
         }
       }
       self.discord.update(&self.status);
-      thread::sleep(Duration::from_secs(2));
+      thread::sleep(Duration::from_secs(5));
     }
 
     true
