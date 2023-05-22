@@ -16,7 +16,7 @@ pub struct AttributesConfig {
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-  pub host: String,
+  pub host: Option<String>,
   mode: String,
   status: String,
   attributes: AttributesConfig,
@@ -45,6 +45,13 @@ impl Config {
       "qualified" => 3,
       "loved" => 4,
       _ => -3,
+    }
+  }
+
+  pub fn get_host(&self) -> String {
+    match &self.host {
+      Some(host) => host.clone(),
+      None => "catboy.best".to_owned()
     }
   }
 
@@ -112,7 +119,7 @@ impl Config {
 impl Default for Config {
   fn default() -> Self {
     Self {
-      host: "catboy.best".to_owned(),
+      host: Some("catboy.best".to_owned()),
       mode: "all".to_owned(),
       status: "all".to_owned(),
       attributes: AttributesConfig {

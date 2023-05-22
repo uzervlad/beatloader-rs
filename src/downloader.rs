@@ -49,7 +49,7 @@ impl<'a> Downloader<'a> {
   }
 
   pub async fn crawl(&mut self, config: &Config) -> bool {
-    let url = format!("https://{}/api/v2/search?{}", config.host, config.get_querystring(self.offset));
+    let url = format!("https://{}/api/v2/search?{}", config.get_host(), config.get_querystring(self.offset));
     println!("{}", url);
     let search = match reqwest::get(url)
       .await.unwrap()
@@ -130,7 +130,7 @@ impl<'a> Downloader<'a> {
 
     let start = SystemTime::now();
 
-    let url = format!("https://{}/d/{}{}", config.host, map.id, if !config.video { "n" } else { "" });
+    let url = format!("https://{}/d/{}{}", config.get_host(), map.id, if !config.video { "n" } else { "" });
     match reqwest::get(url).await {
       Err(_) => {
         Log::error("Something went wrong. Trying again.");
