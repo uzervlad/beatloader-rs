@@ -7,6 +7,10 @@ Should be stable enough
 
 Because everything must be rewritten in Rust
 
+## TODO
+
+- [ ] Replace discord-rpc-client to support buttons
+
 ## Contributing
 
 Please, don't.
