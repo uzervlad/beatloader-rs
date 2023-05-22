@@ -72,11 +72,7 @@ async fn main() {
 
   let mut discord = Discord::new();
 
-  discord.init();
-
-  discord.start();
-
-  let mut downloader = Downloader::new(cache, discord);
+  let mut downloader = Downloader::new(cache, &mut discord);
 
   let mut downloading = true;
   while downloading {
@@ -84,4 +80,6 @@ async fn main() {
   }
 
   Log::error("Reached end of downloads, terminating");
+
+  discord.stop();
 }

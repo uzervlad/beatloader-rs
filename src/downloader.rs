@@ -1,5 +1,6 @@
 use std::{fs::{File, self}, thread, time::{Duration, SystemTime}, io::Write};
 
+use async_recursion::async_recursion;
 use indicatif::{ProgressBar, ProgressStyle, ProgressState};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -20,17 +21,19 @@ pub struct MirrorError {
   error: String,
 }
 
-pub struct Downloader {
+pub struct Downloader<'a> {
   offset: u32,
   cache: Vec<String>,
-  discord: Discord,
+  discord: &'a mut Discord,
   status: DiscordStatus,
   completed_file: File,
   sizes_file: File,
 }
 
-impl Downloader {
-  pub fn new(cache: Vec<String>, discord: Discord) -> Self {
+const RETRY_COUNT: u8 = 5;
+
+impl<'a> Downloader<'a> {
+  pub fn new(cache: Vec<String>, discord: &'a mut Discord) -> Self {
     Self {
       offset: 0,
       cache,
@@ -46,7 +49,7 @@ impl Downloader {
   }
 
   pub async fn crawl(&mut self, config: &Config) -> bool {
-    let url = format!("https://catboy.best/api/v2/search?{}", config.get_querystring(self.offset));
+    let url = format!("https://{}/api/v2/search?{}", config.host, config.get_querystring(self.offset));
     println!("{}", url);
     let search = match reqwest::get(url)
       .await.unwrap()
@@ -88,88 +91,96 @@ impl Downloader {
       }
 
       Log::info(format!("Downloading {} | {} - {} by {}", result.id, result.artist, result.title, result.creator).as_str());
-      match self.download(config, &result).await {
+      match self.download(config, &result, 0).await {
         Ok(size) => {
           self.status.size += size;
         },
-        Err(ratelimit) => {
-          if ratelimit {
-            Log::warn("Mirror reached ratelimit, pausing");
-            thread::sleep(Duration::from_secs(6000));
-          } else {
-            Log::error("Something went wrong");
-            panic!();
+        Err(err) => {
+          match err.as_str() {
+            "Ratelimit" => {
+              Log::warn("Mirror reached ratelimit, pausing");
+              thread::sleep(Duration::from_secs(6000));
+            },
+            "Map not available for download" => {
+              Log::warn("Map is unavailable. Skipping...");
+            },
+            "Skip" => {
+              Log::warn("Retry count exceeded. Skipping...");
+            },
+            _ => {
+              Log::error("Something went horribly wrong");
+              panic!("{}", err)
+            }
           }
         }
       }
-      self.discord.update(&self.status);
+      let status = self.status.clone();
+      self.discord.update(status);
       thread::sleep(Duration::from_secs(5));
     }
 
     true
   }
-  
-  async fn download(&mut self, config: &Config, map: &SearchResult) -> Result<u64, bool> {
+
+  #[async_recursion]
+  async fn download(&mut self, config: &Config, map: &SearchResult, tries: u8) -> Result<u64, String> {
+    if tries >= RETRY_COUNT {
+      return Err("Skip".to_owned())
+    }
+
     let start = SystemTime::now();
 
-    let url = format!("https://catboy.best/d/{}{}", map.id, if !config.video { "n" } else { "" });
-    let mut source = match reqwest::get(url).await {
-      Ok(source) => source,
-      Err(err) => {
-        println!("{} {} {} {}", err.is_connect(), err.is_redirect(), err.is_request(), err.is_timeout());
-        if err.is_timeout() {
-          Log::error("Request timed out. Fucking WHY????????????????");
-        } else {
-          Log::error("Something went wrong");
-        }
-        panic!("{}", err)
+    let url = format!("https://{}/d/{}{}", config.host, map.id, if !config.video { "n" } else { "" });
+    match reqwest::get(url).await {
+      Err(_) => {
+        Log::error("Something went wrong. Trying again.");
+        self.download(config, map, tries + 1).await
       },
-    };
+      Ok(mut source) => {
+        if let Some(content_type) = source.headers().get("content-type") {
+          if content_type.to_str().unwrap().starts_with("application/json") {
+            let data = source.json::<MirrorError>().await.unwrap();
+            return Err(data.error)
+          }
+        }
     
-    if let Some(content_type) = source.headers().get("content-type") {
-      if content_type.to_str().unwrap().starts_with("application/json") {
-        let data = source.json::<MirrorError>().await.unwrap();
-        return Err(data.error == "Ratelimit")
+        let content_length = str::parse::<u64>(source.headers().get("content-length").unwrap().to_str().unwrap()).unwrap();
+    
+        let pb = ProgressBar::new(content_length);
+        pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green}] {bytes}/{total_bytes} ({eta})")
+            .unwrap()
+            .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+            .progress_chars("#>-"));
+    
+        let mut size: u64 = 0;
+    
+        let path = format!("./songs/{}.osz", map.id);
+        let mut dest = File::create(path.clone()).unwrap();
+        while let Some(chunk) = source.chunk().await.unwrap() {
+          dest.write_all(&chunk).unwrap();
+          let new = size + chunk.len() as u64;
+          size = new;
+          pb.set_position(new);
+        }
+    
+        if content_length != size {
+          pb.finish_and_clear();
+          Log::error(format!("Failed to download map {}", map.id).as_str());
+          fs::remove_file(path).unwrap();
+          return Ok(0)
+        }
+    
+        let duration = SystemTime::now().duration_since(start).unwrap().as_millis();
+        pb.finish_and_clear();
+        Log::success(format!("Finished in {} ({}B)", format_millis(duration), SizeFormatterBinary::new(size)).as_str());
+    
+        self.completed_file.write(format!("{},", map.id).as_bytes()).unwrap();
+        self.sizes_file.write(format!("{},", size).as_bytes()).unwrap();
+    
+        self.status.count += 1;
+    
+        Ok(size)
       }
     }
-
-    let content_length = str::parse::<u64>(source.headers().get("content-length").unwrap().to_str().unwrap()).unwrap();
-
-    let pb = ProgressBar::new(content_length);
-    pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green}] {bytes}/{total_bytes} ({eta})")
-        .unwrap()
-        .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-        .progress_chars("#>-"));
-
-    let mut size: u64 = 0;
-
-    let path = format!("./songs/{}.osz", map.id);
-    let mut dest = File::create(path.clone()).unwrap();
-    while let Some(chunk) = source.chunk().await.unwrap() {
-      dest.write_all(&chunk).unwrap();
-      let new = size + chunk.len() as u64;
-      size = new;
-      pb.set_position(new);
-    }
-
-    thread::sleep(Duration::from_millis(50));
-
-    if content_length != size {
-      pb.abandon_with_message(format!("Failed to download map {}", map.id));
-      // Log::error(format!("Failed to download map {}", map.id).as_str());
-      fs::remove_file(path).unwrap();
-      return Ok(0)
-    }
-
-    let duration = SystemTime::now().duration_since(start).unwrap().as_millis();
-    pb.finish_with_message(format!("Finished in {} ({}B)", format_millis(duration), SizeFormatterBinary::new(size)));
-    // Log::success(format!("Finished in {} ({}B)", format_millis(duration), SizeFormatterBinary::new(size)).as_str());
-
-    self.completed_file.write(format!("{},", map.id).as_bytes()).unwrap();
-    self.sizes_file.write(format!("{},", size).as_bytes()).unwrap();
-
-    self.status.count += 1;
-
-    Ok(size)
   }
 }

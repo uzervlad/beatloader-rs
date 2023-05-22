@@ -16,6 +16,7 @@ pub struct AttributesConfig {
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
+  pub host: String,
   mode: String,
   status: String,
   attributes: AttributesConfig,
@@ -111,6 +112,7 @@ impl Config {
 impl Default for Config {
   fn default() -> Self {
     Self {
+      host: "catboy.best".to_owned(),
       mode: "all".to_owned(),
       status: "all".to_owned(),
       attributes: AttributesConfig {
