@@ -1,5 +1,16 @@
 # beatloader-rs
 
-Shitty port of [Beatloader](https://github.com/Calemy/Beatloader) to rust, that panics from a timeout 90% of the time
+Shitty port of [Beatloader](https://github.com/Calemy/Beatloader) to Rust.
+Should be stable enough
 
-> ⚠️ DO NOT USE THIS UNLESS YOU'RE WILLING TO LOSE A FEW BRAINCELLS TRYING TO GET IT TO WORK
+## Why?
+
+Because everything must be rewritten in Rust
+
+## Contributing
+
+Please, don't.
+
+## License
+
+couldnt care less
